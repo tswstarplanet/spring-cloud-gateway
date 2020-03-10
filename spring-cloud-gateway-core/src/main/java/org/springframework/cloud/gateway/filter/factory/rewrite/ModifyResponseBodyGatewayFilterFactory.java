@@ -16,7 +16,6 @@
 
 package org.springframework.cloud.gateway.filter.factory.rewrite;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -38,14 +37,9 @@ import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferFactory;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseCookie;
-import org.springframework.http.client.reactive.ClientHttpResponse;
-import org.springframework.http.codec.ServerCodecConfigurer;
+import org.springframework.http.codec.HttpMessageReader;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.http.server.reactive.ServerHttpResponseDecorator;
-import org.springframework.lang.Nullable;
-import org.springframework.util.MultiValueMap;
 import org.springframework.web.reactive.function.BodyInserter;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.ClientResponse;
@@ -61,34 +55,18 @@ import static org.springframework.cloud.gateway.support.ServerWebExchangeUtils.O
 public class ModifyResponseBodyGatewayFilterFactory extends
 		AbstractGatewayFilterFactory<ModifyResponseBodyGatewayFilterFactory.Config> {
 
-	@Nullable
-	private final ServerCodecConfigurer codecConfigurer;
-
 	private final Map<String, MessageBodyDecoder> messageBodyDecoders;
 
 	private final Map<String, MessageBodyEncoder> messageBodyEncoders;
 
-	@Deprecated
-	public ModifyResponseBodyGatewayFilterFactory() {
-		super(Config.class);
-		this.codecConfigurer = null;
-		messageBodyDecoders = Collections.emptyMap();
-		messageBodyEncoders = Collections.emptyMap();
-	}
+	private final List<HttpMessageReader<?>> messageReaders;
 
-	@Deprecated
-	public ModifyResponseBodyGatewayFilterFactory(ServerCodecConfigurer codecConfigurer) {
-		super(Config.class);
-		this.codecConfigurer = codecConfigurer;
-		messageBodyDecoders = Collections.emptyMap();
-		messageBodyEncoders = Collections.emptyMap();
-	}
-
-	public ModifyResponseBodyGatewayFilterFactory(ServerCodecConfigurer codecConfigurer,
+	public ModifyResponseBodyGatewayFilterFactory(
+			List<HttpMessageReader<?>> messageReaders,
 			Set<MessageBodyDecoder> messageBodyDecoders,
 			Set<MessageBodyEncoder> messageBodyEncoders) {
 		super(Config.class);
-		this.codecConfigurer = codecConfigurer;
+		this.messageReaders = messageReaders;
 		this.messageBodyDecoders = messageBodyDecoders.stream()
 				.collect(Collectors.toMap(MessageBodyDecoder::encodingType, identity()));
 		this.messageBodyEncoders = messageBodyEncoders.stream()
@@ -98,7 +76,7 @@ public class ModifyResponseBodyGatewayFilterFactory extends
 	@Override
 	public GatewayFilter apply(Config config) {
 		ModifyResponseGatewayFilter gatewayFilter = new ModifyResponseGatewayFilter(
-				config, codecConfigurer);
+				config);
 		gatewayFilter.setFactory(this);
 		return gatewayFilter;
 	}
@@ -185,32 +163,16 @@ public class ModifyResponseBodyGatewayFilterFactory extends
 
 		private final Config config;
 
-		@Nullable
-		private final ServerCodecConfigurer codecConfigurer;
-
 		private GatewayFilterFactory<Config> gatewayFilterFactory;
 
-		@Deprecated
 		public ModifyResponseGatewayFilter(Config config) {
-			this(config, null);
-		}
-
-		public ModifyResponseGatewayFilter(Config config,
-				@Nullable ServerCodecConfigurer codecConfigurer) {
 			this.config = config;
-			this.codecConfigurer = codecConfigurer;
 		}
 
 		@Override
 		public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
 			return chain.filter(exchange.mutate()
 					.response(new ModifiedServerHttpResponse(exchange, config)).build());
-		}
-
-		@SuppressWarnings("unchecked")
-		@Deprecated
-		ServerHttpResponse decorate(ServerWebExchange exchange) {
-			return new ModifiedServerHttpResponse(exchange, config);
 		}
 
 		@Override
@@ -299,13 +261,8 @@ public class ModifyResponseBodyGatewayFilterFactory extends
 		private ClientResponse prepareClientResponse(Publisher<? extends DataBuffer> body,
 				HttpHeaders httpHeaders) {
 			ClientResponse.Builder builder;
-			if (codecConfigurer != null) {
-				builder = ClientResponse.create(exchange.getResponse().getStatusCode(),
-						codecConfigurer.getReaders());
-			}
-			else {
-				builder = ClientResponse.create(exchange.getResponse().getStatusCode());
-			}
+			builder = ClientResponse.create(exchange.getResponse().getStatusCode(),
+					messageReaders);
 			return builder.headers(headers -> headers.putAll(httpHeaders))
 					.body(Flux.from(body)).build();
 		}
@@ -356,52 +313,6 @@ public class ModifyResponseBodyGatewayFilterFactory extends
 			}
 
 			return response;
-		}
-
-	}
-
-	@Deprecated
-	@SuppressWarnings("unchecked")
-	public class ResponseAdapter implements ClientHttpResponse {
-
-		private final Flux<DataBuffer> flux;
-
-		private final HttpHeaders headers;
-
-		public ResponseAdapter(Publisher<? extends DataBuffer> body,
-				HttpHeaders headers) {
-			this.headers = headers;
-			if (body instanceof Flux) {
-				flux = (Flux) body;
-			}
-			else {
-				flux = ((Mono) body).flux();
-			}
-		}
-
-		@Override
-		public Flux<DataBuffer> getBody() {
-			return flux;
-		}
-
-		@Override
-		public HttpHeaders getHeaders() {
-			return headers;
-		}
-
-		@Override
-		public HttpStatus getStatusCode() {
-			return null;
-		}
-
-		@Override
-		public int getRawStatusCode() {
-			return 0;
-		}
-
-		@Override
-		public MultiValueMap<String, ResponseCookie> getCookies() {
-			return null;
 		}
 
 	}
